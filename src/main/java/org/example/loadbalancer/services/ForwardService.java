@@ -43,15 +43,23 @@ public class ForwardService {
 	private String retry() {
 		List<String> healthyUrls = healthCheckService.getHealthyServers();
 
-		for (int i = 0; i < healthyUrls.size(); i++) {
-			int index = currentIndex.getAndUpdate(idx -> (idx + 1) % healthyUrls.size());
+		if (healthyUrls == null || healthyUrls.isEmpty()) {
+			throw new BadGatewayException("502 Bad Gateway: No backend servers available.");
+		}
+
+		int maxAttempts = healthyUrls.size();
+
+		for (int i = 0; i < maxAttempts; i++) {
+			int index = Math.abs(currentIndex.getAndIncrement() % maxAttempts);
+
+			String targetUrl = healthyUrls.get(index);
 
 			try {
-				logger.log(Level.INFO, "Forwarding request to {0}", healthyUrls.get(index));
-				return restClient.get().uri(healthyUrls.get(index)).retrieve().body(String.class);
+				logger.log(Level.INFO, "Forwarding request to {0}", targetUrl);
+				return restClient.get().uri(targetUrl).retrieve().body(String.class);
 			} catch (Exception e) {
-				logger.log(Level.WARNING, "Failed to forward request to {0}: {1}", new Object[]{healthyUrls.get(currentIndex.get()), e.getMessage()});
-				healthCheckService.removeServer(i);
+				healthCheckService.removeServer(targetUrl);
+				logger.log(Level.WARNING, "Failed to forward request to {0}: {1}", new Object[]{targetUrl, e.getMessage()});
 			}
 		}
 

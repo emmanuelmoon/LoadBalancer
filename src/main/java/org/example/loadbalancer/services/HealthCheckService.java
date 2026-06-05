@@ -9,6 +9,7 @@ import org.springframework.web.client.RestClient;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -22,23 +23,26 @@ public class HealthCheckService {
 
 	private static final RestClient restClient = RestClient.create();
 
-	private volatile List<String> healthyServers;
+	private CopyOnWriteArrayList<String> healthyServers;
 
 	@Scheduled(fixedRate = 10000)
 	public void healthCheck() {
 		try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
 			Map<String, Future<Boolean>> futures = Arrays.stream(forwardUrls).collect(Collectors.toMap(
 					Function.identity(), url -> executor.submit(()-> isHealthy(url))));
-			healthyServers = futures.entrySet().stream()
+			List<String> latestHealthy = futures.entrySet().stream()
 					.filter(entry -> {
 						try {
 							return entry.getValue().get();
-						} catch (InterruptedException | ExecutionException e) {
-							return false;
+						} catch (InterruptedException | ExecutionException _) {
+							Thread.currentThread().interrupt();
 						}
+						return false;
 					})
 					.map(Map.Entry::getKey)
 					.toList();
+
+			healthyServers = new CopyOnWriteArrayList<>(latestHealthy);
 		}
 	}
 
@@ -50,8 +54,11 @@ public class HealthCheckService {
 		return healthyServers;
 	}
 
-	public void removeServer(int index) {
-		healthyServers.remove(index);
+	public void removeServer(String url) {
+		if (healthyServers == null) {
+			return;
+		}
+		healthyServers.remove(url);
 	}
 
 }
