@@ -34,7 +34,7 @@ public class HealthCheckService {
 						try {
 							return entry.getValue().get();
 						} catch (InterruptedException | ExecutionException e) {
-							throw new RuntimeException(e);
+							return false;
 						}
 					})
 					.map(Map.Entry::getKey)
@@ -48,6 +48,10 @@ public class HealthCheckService {
 
 	public List<String> getHealthyServers() {
 		return healthyServers;
+	}
+
+	public void removeServer(int index) {
+		healthyServers.remove(index);
 	}
 
 }

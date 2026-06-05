@@ -1,5 +1,6 @@
 package org.example.loadbalancer.services;
 
+import org.example.loadbalancer.Exception.BadGatewayException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -25,11 +26,6 @@ public class ForwardService {
 
 	@Async
 	public CompletableFuture<String> forwardRequest(String method, String uri, String protocol, String host, String userAgent, String accept) {
-
-		List<String> healthyUrls = healthCheckService.getHealthyServers();
-
-		currentIndex.getAndUpdate(i -> (i + 1) % healthyUrls.size());
-
 		String sb = "Received request from " +
 				method +
 				" " + uri + " " +
@@ -41,9 +37,24 @@ public class ForwardService {
 
 		logger.log(Level.INFO, sb);
 
-		CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> restClient.get().uri(healthyUrls.get(currentIndex.get())).retrieve().body(String.class));
-		logger.log(Level.INFO, "Hello from server {0}", healthyUrls.get(currentIndex.get()));
+		return CompletableFuture.supplyAsync(this::retry);
+	}
 
-		return result;
+	private String retry() {
+		List<String> healthyUrls = healthCheckService.getHealthyServers();
+
+		for (int i = 0; i < healthyUrls.size(); i++) {
+			int index = currentIndex.getAndUpdate(idx -> (idx + 1) % healthyUrls.size());
+
+			try {
+				logger.log(Level.INFO, "Forwarding request to {0}", healthyUrls.get(index));
+				return restClient.get().uri(healthyUrls.get(index)).retrieve().body(String.class);
+			} catch (Exception e) {
+				logger.log(Level.WARNING, "Failed to forward request to {0}: {1}", new Object[]{healthyUrls.get(currentIndex.get()), e.getMessage()});
+				healthCheckService.removeServer(i);
+			}
+		}
+
+		throw new BadGatewayException("502 Bad Gateway: All backend servers failed to process the request.");
 	}
 }
